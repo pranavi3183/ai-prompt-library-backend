@@ -1,4 +1,4 @@
-import json, redis
+import json, redis, logging
 from django.conf import settings
 from django.http import JsonResponse
 from django.views import View
@@ -6,12 +6,32 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from .models import Prompt, Tag
 
-redis_client = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=settings.REDIS_DB, decode_responses=True)
+logger = logging.getLogger(__name__)
+
+# Initialize redis client from URL if provided, otherwise fall back to HOST/PORT/DB
+redis_client = None
 REDIS_AVAILABLE = True
 try:
+    if getattr(settings, 'REDIS_URL', None):
+        # use from_url so credentials, host, port and db are parsed automatically
+        redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        # sanitize URL for logging (do not print password)
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(settings.REDIS_URL)
+            host_info = f"{parsed.hostname}:{parsed.port}"
+        except Exception:
+            host_info = 'redis_url'
+        logger.debug("Redis connected via URL to %s", host_info)
+    else:
+        redis_client = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=settings.REDIS_DB, decode_responses=True)
+        logger.debug("Attempting Redis connection to %s:%s (db=%s)", settings.REDIS_HOST, settings.REDIS_PORT, settings.REDIS_DB)
+    # ping to verify
     redis_client.ping()
-except Exception:
+    logger.debug("Redis ping successful")
+except Exception as e:
     REDIS_AVAILABLE = False
+    logger.debug("Redis not available: %s", e)
 
 def get_view_count(prompt_id):
     if not REDIS_AVAILABLE: return 0
